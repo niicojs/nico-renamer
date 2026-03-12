@@ -35,6 +35,13 @@ if (existsSync(excelfile)) {
       const name = file.nom.replace(re, file.maj.toString());
       if (name !== file.nom) {
         Deno.renameSync(join(dir, file.nom), join(dir, name));
+
+        const content = Deno.readTextFileSync(join(dir, name));
+        const newContent = content.replace(
+          /Sample concentration: (\d+.\d+)/,
+          `Sample concentration: ${file.maj.toString()}`,
+        );
+        Deno.writeTextFileSync(join(dir, name), newContent);
       }
     }
   }
@@ -42,7 +49,7 @@ if (existsSync(excelfile)) {
   console.info('Fichier excel non existant, on le crée.');
 
   const files = Deno.readDirSync(dir).filter(
-    (f) => !f.isDirectory && f.name.startsWith('[') && f.name.endsWith('.txt')
+    (f) => !f.isDirectory && f.name.startsWith('[') && f.name.endsWith('.txt'),
   );
 
   const data = Array.from(files).map((f) => {
