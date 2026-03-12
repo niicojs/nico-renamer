@@ -18,30 +18,30 @@ jobs:
       - name: Setup Deno
         uses: denoland/setup-deno@v2
 
-      - name: Build Node Windows
+      - name: Build Deno Windows
         run: |
           cd deno
           deno compile -A --target x86_64-pc-windows-msvc --output nico-renamer-deno ./main.ts
 
-      - name: Build Node MacOS
+      - name: Build Deno MacOS
         run: |
           cd deno
           deno compile -A --target x86_64-apple-darwin --output nico-renamer-deno ./main.ts
 
-      - name: Setup Zig
-        uses: mlugg/setup-zig@v2
-        with:
-          version: 0.15.2
+      # - name: Setup Zig
+      #   uses: mlugg/setup-zig@v2
+      #   with:
+      #     version: 0.15.2
 
-      - name: Build Zig Windows
-        run: |
-          cd zig
-          zig build --release=safe -Dtarget=x86_64-windows
+      # - name: Build Zig Windows
+      #   run: |
+      #     cd zig
+      #     zig build --release=safe -Dtarget=x86_64-windows
 
-      - name: Build Zig MacOS
-        run: |
-          cd zig
-          zig build --release=safe -Dtarget=x86_64-macos
+      # - name: Build Zig MacOS
+      #   run: |
+      #     cd zig
+      #     zig build --release=safe -Dtarget=x86_64-macos
 
       - name: Get current date
         id: date
