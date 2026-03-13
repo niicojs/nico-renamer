@@ -34,11 +34,13 @@ jobs:
       - name: Build Bun Windows
         run: |
           cd node
+          bun install
           bun build --compile --minify --bytecode --format esm --target=bun-windows-x64-modern --outfile nico-renamer-bun ./index.ts
 
       - name: Build Bun MacOS
         run: |
           cd node
+          bun install
           bun build --compile --minify --bytecode --format esm --target=bun-darwin-arm64 --outfile nico-renamer-bun ./index.ts
 
       # - name: Setup Zig
