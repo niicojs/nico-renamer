@@ -1,5 +1,3 @@
 .zig-cache
 zig-out
 test-data
-rename.csv
-rename.xlsx
