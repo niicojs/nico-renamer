@@ -43,20 +43,20 @@ jobs:
           bun install
           bun build --compile --minify --bytecode --format esm --target=bun-darwin-arm64 --outfile nico-renamer-bun ./index.ts
 
-      # - name: Setup Zig
-      #   uses: mlugg/setup-zig@v2
-      #   with:
-      #     version: 0.15.2
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
 
-      # - name: Build Zig Windows
-      #   run: |
-      #     cd zig
-      #     zig build --release=safe -Dtarget=x86_64-windows
+      - name: Build Zig Windows
+        run: |
+          cd zig
+          zig build --release=safe -Dtarget=x86_64-windows
 
-      # - name: Build Zig MacOS
-      #   run: |
-      #     cd zig
-      #     zig build --release=safe -Dtarget=x86_64-macos
+      - name: Build Zig MacOS
+        run: |
+          cd zig
+          zig build --release=safe -Dtarget=x86_64-macos
 
       - name: Get current date
         id: date
@@ -73,3 +73,5 @@ jobs:
             deno/nico-renamer-deno
             node/nico-renamer-bun.exe
             node/nico-renamer-bun
+            zig/zig-out/bin/nico-renamer-zig.exe
+            zig/zig-out/bin/nico-renamer-zig
