@@ -1,116 +1,131 @@
 const std = @import("std");
-const zcsv = @import("zcsv");
-const utils = @import("./utils.zig");
+const Io = std.Io;
+const excel = @import("excel.zig");
+const utils = @import("utils.zig");
 
-const RENAME_FILE = "rename.csv";
+const PREFIX = "Sample concentration: ";
 
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
     const cp_out = utils.UTF8ConsoleOutput.init();
     defer cp_out.deinit();
 
-    const stdout_file = std.io.getStdOut().writer();
-    var bw = std.io.bufferedWriter(stdout_file);
-    const stdout = bw.writer();
-    defer bw.flush() catch unreachable;
+    std.debug.print("┌──────────────┐\n", .{});
+    std.debug.print("│ nico renamer │\n", .{});
+    std.debug.print("└──────────────┘\n", .{});
 
-    try stdout.print("┌──────────────┐\n", .{});
-    try stdout.print("│ nico renamer │\n", .{});
-    try stdout.print("└──────────────┘\n", .{});
+    const io = init.io;
 
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
+    const args = try init.minimal.args.toSlice(init.arena.allocator());
+    const dir_path = if (args.len > 1) args[1] else ".";
+    std.debug.print("Répertoire: {s}\n", .{dir_path});
 
-    const dirname = if (args.len > 1) args[1] else ".";
-    try stdout.print("Répertoire: {s}\n", .{dirname});
-
-    const dir = std.fs.cwd().openDir(dirname, .{ .iterate = true }) catch |err| {
-        try stdout.print("Impossible d'ouvrir le répertoire: {s}\n", .{@errorName(err)});
+    var dir = std.Io.Dir.cwd().openDir(io, dir_path, .{ .iterate = true }) catch |err| {
+        std.debug.print("Impossible d'ouvrir le répertoire: {s}\n", .{@errorName(err)});
         return;
     };
+    defer dir.close(io);
 
-    const file = dir.openFile(RENAME_FILE, .{}) catch |err| switch (err) {
-        std.fs.File.OpenError.FileNotFound => {
-            try stdout.print("Génération du fichier CSV...\n", .{});
-            try buildExcelFile(dir);
-            try stdout.print("Done 🚀\n", .{});
-            return;
-        },
-        else => {
-            try stdout.print("Impossible d'ouvrir le fichier CSV: {s}\n", .{@errorName(err)});
-            return;
-        },
+    const has_excel = blk: {
+        dir.access(io, excel.RENAME_FILE, .{}) catch break :blk false;
+        break :blk true;
     };
 
-    defer file.close();
-    try stdout.print("Renommage...\n", .{});
-
-    var parser = try zcsv.allocs.map.init(allocator, file.reader(), .{ .column_delim = ';' });
-    defer parser.deinit();
-
-    while (parser.next()) |row| {
-        defer row.deinit();
-
-        const f_fichier = row.data().get("fichier") orelse continue;
-        const f_prev = row.data().get("concentration") orelse continue;
-        const f_maj = row.data().get("maj") orelse continue;
-
-        const fichier = zcsv.decode.fieldToStr(f_fichier) orelse continue;
-        const prev = zcsv.decode.fieldToStr(f_prev) orelse continue;
-        const maj = zcsv.decode.fieldToStr(f_maj) orelse continue;
-
-        const newname = get_new_name(allocator, fichier.str, prev.str, maj.str) catch |err| {
-            try stdout.print("erreur pour calculer le nouveau nom: {s}\n", .{@errorName(err)});
-            continue;
-        };
-
-        if (!std.mem.eql(u8, fichier.str, newname)) {
-            std.fs.rename(dir, fichier.str, dir, newname) catch |err| {
-                try stdout.print("impossible de renommer le fichier '{s}': {s}\n", .{ fichier.str, @errorName(err) });
-            };
-        }
-
-        defer allocator.free(newname);
+    if (!has_excel) {
+        std.debug.print("Fichier excel non existant, on le crée.\n", .{});
+        try buildExcelFile(io, allocator, &dir);
+        std.debug.print("Ok.\n", .{});
+        return;
     }
 
-    try stdout.print("Done 🚀\n", .{});
+    std.debug.print("Fichier excel existant, on renomme.\n", .{});
+    try renameFromExcel(io, allocator, &dir);
+    std.debug.print("Ok.\n", .{});
 }
 
-fn buildExcelFile(dir: std.fs.Dir) !void {
-    const file = try dir.createFile(RENAME_FILE, .{ .exclusive = true });
-    defer file.close();
-
-    const csv_writer = zcsv.writer.init(file.writer(), .{ .column_delim = ';' });
-    try csv_writer.writeRow(.{ "fichier", "concentration", "maj" });
+fn buildExcelFile(io: Io, allocator: std.mem.Allocator, dir: *Io.Dir) !void {
+    var rows = std.ArrayList(excel.RowData).empty;
+    defer {
+        for (rows.items) |row| excel.freeRow(allocator, row);
+        rows.deinit(allocator);
+    }
 
     var iter = dir.iterate();
-    while (try iter.next()) |entry| {
+    while (try iter.next(io)) |entry| {
         if (entry.kind != .file) continue;
-        if (entry.name[0] != '[') continue;
         if (!std.mem.endsWith(u8, entry.name, ".txt")) continue;
 
-        const name = entry.name;
-        var i: usize = 1;
-        while (std.ascii.isDigit(name[i]) or name[i] == '.' or name[i] == ',') {
-            i += 1;
-        }
+        const concentration = extractConcentration(entry.name) orelse "0";
+        try rows.append(allocator, .{
+            .nom = try allocator.dupe(u8, entry.name),
+            .concentration = try allocator.dupe(u8, concentration),
+            .maj = try allocator.dupe(u8, concentration),
+        });
+    }
 
-        try csv_writer.writeRow(.{ entry.name, entry.name[1..i], entry.name[1..i] });
+    try excel.writeXlsx(io, allocator, dir, rows.items);
+}
+
+fn renameFromExcel(io: Io, allocator: std.mem.Allocator, dir: *Io.Dir) !void {
+    var rows = try excel.readXlsx(io, allocator, dir);
+    defer {
+        for (rows.items) |row| excel.freeRow(allocator, row);
+        rows.deinit(allocator);
+    }
+
+    for (rows.items) |row| {
+        if (row.nom.len == 0 or row.maj.len == 0) continue;
+        dir.access(io, row.nom, .{}) catch continue;
+
+        const new_name = try buildNewName(allocator, row.nom, row.maj);
+        defer allocator.free(new_name);
+
+        if (std.mem.eql(u8, row.nom, new_name)) continue;
+
+        dir.rename(row.nom, dir.*, new_name, io) catch continue;
+        try rewriteConcentrationInFile(io, allocator, dir, new_name, row.maj);
     }
 }
 
-fn get_new_name(allocator: std.mem.Allocator, name: []const u8, old: []const u8, new: []const u8) ![]const u8 {
-    var i: usize = 1;
-    while (std.ascii.isDigit(name[i]) or name[i] == '.' or name[i] == ',') {
-        i += 1;
-    }
+fn extractConcentration(name: []const u8) ?[]const u8 {
+    if (name.len < 2 or name[0] != '[') return null;
 
-    if (!std.mem.eql(u8, old, name[1..i])) {
-        return std.mem.Allocator.dupe(allocator, u8, name);
-    } else {
-        return std.fmt.allocPrint(allocator, "[{s}{s}", .{ new, name[i..] });
-    }
+    var i: usize = 1;
+    const start = i;
+    while (i < name.len and (std.ascii.isDigit(name[i]) or name[i] == '.')) : (i += 1) {}
+    if (i == start) return null;
+
+    return name[start..i];
+}
+
+fn buildNewName(allocator: std.mem.Allocator, old_name: []const u8, maj: []const u8) ![]u8 {
+    if (old_name.len < 2 or old_name[0] != '[') return allocator.dupe(u8, old_name);
+
+    var i: usize = 1;
+    while (i < old_name.len and (std.ascii.isDigit(old_name[i]) or old_name[i] == '.')) : (i += 1) {}
+    if (i == 1 or i >= old_name.len) return allocator.dupe(u8, old_name);
+
+    return std.fmt.allocPrint(allocator, "[{s}{s}", .{ maj, old_name[i..] });
+}
+
+fn rewriteConcentrationInFile(io: Io, allocator: std.mem.Allocator, dir: *Io.Dir, name: []const u8, maj: []const u8) !void {
+    const content = try dir.readFileAlloc(io, name, allocator, Io.Limit.limited(1024 * 1024 * 64));
+    defer allocator.free(content);
+
+    const idx = std.mem.indexOf(u8, content, PREFIX) orelse return;
+    const start = idx + PREFIX.len;
+
+    var end: usize = start;
+    while (end < content.len and (std.ascii.isDigit(content[end]) or content[end] == '.')) : (end += 1) {}
+    if (end == start) return;
+
+    const new_content = try std.fmt.allocPrint(allocator, "{s}{s}{s}", .{ content[0..start], maj, content[end..] });
+    defer allocator.free(new_content);
+
+    var file = try dir.createFile(io, name, .{ .truncate = true });
+    defer file.close(io);
+    try file.writeStreamingAll(io, new_content);
 }
